@@ -14,3 +14,4 @@ From the manual: The following commands are used to manipulate plist data:
  * Add entry type [value] -- Adds entry with type type and optional value value.  See below for a list of types.
  * Delete entry -- Deletes entry from the plist.
 
+http://ku-fpg.github.io/2015/12/10/remote-monad-part-1/

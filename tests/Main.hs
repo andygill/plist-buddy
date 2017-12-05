@@ -1,63 +1,68 @@
-{-# LANGUAGE GeneralizedNewtypeDeriving, DeriveGeneric, OverloadedStrings, ScopedTypeVariables #-}
-import Database.PlistBuddy 
+{-# LANGUAGE DeriveGeneric              #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE OverloadedStrings          #-}
+{-# LANGUAGE ScopedTypeVariables        #-}
+import           Database.PlistBuddy
+import           Control.Monad             (when)
+import           Control.Monad.Except
 
-import Data.Monoid
-import Control.Monad (when)
-import Data.Text(Text,pack,unpack)
-import qualified Data.Text as T
-import Data.Text.IO as TIO
-import Data.Time
-import qualified Data.ByteString as BS
+import qualified Data.ByteString           as BS
+import           Data.Monoid
+import           Data.Text                 (Text, pack, unpack)
+import qualified Data.Text                 as T
+import           Data.Text.IO              as TIO
+import           Data.Time
 
-import Test.Hspec
-import Test.Hspec.QuickCheck
-import Test.QuickCheck hiding (replay)
-import Test.QuickCheck.Exception
-import Control.Exception (evaluate, bracket, catch)
+import           Control.Exception         (bracket, catch, evaluate)
+import           Test.Hspec
+import           Test.Hspec.QuickCheck
+import           Test.QuickCheck           hiding (replay)
+import           Test.QuickCheck.Exception
 
-import qualified System.IO as IO
-import System.Timeout
-import Control.Concurrent (threadDelay)
-import System.Mem
-import System.Directory (removeFile, doesFileExist)
+import           Control.Concurrent        (threadDelay)
+import           System.Directory          (doesFileExist, removeFile)
+import qualified System.IO                 as IO
+import           System.Mem
+import           System.Timeout
 
-import Data.List (sortBy, sort, nub, transpose,lookup)
+import           Data.List                 (lookup, nub, sort, sortBy,
+                                            transpose)
 
-import GHC.Generics
-import Control.Monad.Reader
+import           Control.Monad.Reader
+import           GHC.Generics
 
-import System.Environment
-import Data.Char (isDigit)
+import           Data.Char                 (isDigit)
+import           System.Environment
+
 
 clearAudit :: IO ()
-clearAudit = do
-  TIO.writeFile "test.audit" ""  
+clearAudit = TIO.writeFile "test.audit" ""
 
 clearDB :: IO ()
 clearDB = do
-  TIO.writeFile "test.plist" "{}" 
-  TIO.writeFile "test.audit" ""  
+  TIO.writeFile "test.plist" "{}"
+  TIO.writeFile "test.audit" ""
 
 rmDB :: IO ()
-rmDB = do
-  doesFileExist "test.plist" >>= \ b -> when b (removeFile "test.plist")
+rmDB = doesFileExist "test.plist" >>= \ b -> when b (removeFile "test.plist")
 
 openConnection :: Bool -> IO Plist
 openConnection audit = do
     d <- openPlist "test.plist"
     send d $ clear (Dict [])
-    if audit 
+    if audit
     then auditOn "test.audit" d
     else return d
-        
+
 closeConnection :: Plist -> IO ()
 closeConnection d = send d $ exit
 
+
 -- only for tests that write then read
 withPlistConnection :: Bool -> (Plist -> IO ()) -> IO ()
-withPlistConnection audit 
-                    = guardPlistBuddyException 
-                    . bracket (openConnection audit)
+withPlistConnection audit
+                    = --guardPlistBuddyException .
+                      bracket (openConnection audit)
                               closeConnection
 
 guardPlistBuddyException :: IO a -> IO a
@@ -79,21 +84,21 @@ main = hspec $ do
         _ <- send d $ clear (Array [])
         r0 <- send d $ get []
         r0 `shouldBe` Array []
-      
+
       it "check reset to back to an dict" $ withPlistConnection False $ \ d -> do
         _ <- send d $ clear (Array [])
         _ <- send d $ clear (Dict [])
         r0 <- send d $ get []
         r0 `shouldBe` Dict []
 
-      it "check adding a value at top level" $ 
+      it "check adding a value at top level" $
         property $ \ (Label lbl) (OneValue v) audit -> withPlistConnection audit $ \ d -> do
                 debug $ ("add val top",lbl,v)
                 _ <- send d $ add [lbl] v
                 r0 <- send d $ get []
                 r0 `shouldBe` Dict [(lbl,v)]
 
-      it "check adding then setting a value at top level" $ 
+      it "check adding then setting a value at top level" $
         property $ \ (Label lbl) (PrimValue v1) audit ->
           forAll (arbitrarySameType v1) $ \ v2 ->
             withPlistConnection audit $ \ d -> do
@@ -103,7 +108,7 @@ main = hspec $ do
               r0 <- send d $ get []
               r0 `shouldBe` Dict [(lbl,v2)]
 
-      it "populate a DB" $ 
+      it "populate a DB" $
         property $ \ (DictValue v) audit -> withPlistConnection audit $ \ d -> do
           debug $ ("populate",v)
           r0 <- send d $ do
@@ -111,16 +116,16 @@ main = hspec $ do
             get []
           r0 `shouldBe` v
 
-      it "test deeper get" $ 
-        property $ \ (DictValue v) audit -> 
+      it "test deeper get" $
+        property $ \ (DictValue v) audit ->
           forAll (arbitraryReadPath 0.8 v) $ \ (Path ps,v') -> do
             withPlistConnection audit $ \ d -> do
               send d $ populateDict v
               r0 <- send d $ get ps
               r0 `shouldBe` v'
 
-      it "test deepest get" $ 
-        property $ \ (DictValue v) audit -> 
+      it "test deepest get" $
+        property $ \ (DictValue v) audit ->
           forAll (arbitraryReadPath 1.0 v) $ \ (Path ps,v') -> do
             withPlistConnection audit $ \ d -> do
               send d $ populateDict v
@@ -128,9 +133,9 @@ main = hspec $ do
               r0 `shouldBe` v'
 
 
-      it "test deepest set then get" $ 
-        property $ \ (DictValue v) audit -> 
-          forAll (arbitraryReadPath 1.0 v) $ \ (Path ps,v1) -> 
+      it "test deepest set then get" $
+        property $ \ (DictValue v) audit ->
+          forAll (arbitraryReadPath 1.0 v) $ \ (Path ps,v1) ->
             not (null ps) && (case v1 of { Dict {} -> False; Array {} -> False ; _-> True}) ==>
             forAll (arbitrarySameType v1) $ \ v2 ->
               withPlistConnection audit $ \ d -> do
@@ -140,9 +145,9 @@ main = hspec $ do
                 r0 <- send d $ get ps
                 r0 `shouldBe` v2
 
-      it "test delete" $ 
-        property $ \ (DictValue v) audit -> 
-          forAll (arbitraryReadPath 1.0 v) $ \ (Path ps,v1) -> 
+      it "test delete" $
+        property $ \ (DictValue v) audit ->
+          forAll (arbitraryReadPath 1.0 v) $ \ (Path ps,v1) ->
             not (null ps) ==>
               withPlistConnection audit $ \ d -> do
 --                print (v1,ps)
@@ -154,7 +159,7 @@ main = hspec $ do
                   return (r1,parent)
                 case parent of
                     Dict {} -> do
-                        r2 <- send d $ ((Just <$> get ps) `catchPlistError` \ _ -> return Nothing)
+                        r2 <- (Just <$> send d (get ps)) `catch` \ (PlistBuddyException _) -> return Nothing
                         (r1,r2) `shouldBe` (v1,Nothing)
                     Array xs -> do
                         xs' <- send d $ do
@@ -162,18 +167,18 @@ main = hspec $ do
                           return xs'
                         (r1,length xs) `shouldBe` (v1,length xs' + 1)
 
-      it "check for bad path error handling" $ 
+      it "check for bad path error handling" $
         property $ \ (DictValue v) (Path p) audit -> p `notIn` v ==>  withPlistConnection audit $ \ d -> do
           debug $ ("bad path",v,p)
           r <- (send d $ (do
                   populateDict v
                   get p
-                  return False) `catchPlistError` \ e -> do
-                    return True)
+                  return False)) `catch` \ (PlistBuddyException _) -> do
+                    return True
 
           r `shouldBe` True
 
-      it "test get/set/delete sequences" $ 
+      it "test get/set/delete sequences" $
         property $ \ audit ->
           forAll (modSized 8 return) $ \ n ->
           forAll (Blind <$> arbitraryUpdates n (Dict [])) $ \ (Blind updates) ->
@@ -184,13 +189,13 @@ main = hspec $ do
                             u -- the update
                             r <- get []
                             return (v,r)
-                  | (u,v) <- updates 
+                  | (u,v) <- updates
                   ]
                 map fst xs `shouldBe` map snd xs
 
   beforeAll clearDB $ do
-    describe "plist modification" $ do  
-      it "test save of DB" $ 
+    describe "plist modification" $ do
+      it "test save of DB" $
         property $ \ (DictValue v) -> guardPlistBuddyException $ do
           d <- openPlist "test.plist"
           send d $ clear (Dict [])  -- clear dict
@@ -203,7 +208,7 @@ main = hspec $ do
           send d $ exit
           r0 `shouldBe` v
 
-      it "test save of DB, with changes in between" $ 
+      it "test save of DB, with changes in between" $
         property $ \ (DictValue v) (DictValue v') -> guardPlistBuddyException $ do
           d <- openPlist "test.plist"
           send d $ clear (Dict [])  -- clear dict
@@ -218,7 +223,7 @@ main = hspec $ do
           send d $ exit
           r0 `shouldBe` v
 
-      it "test save and revert of DB" $ 
+      it "test save and revert of DB" $
         property $ \ (DictValue v) (DictValue v') -> guardPlistBuddyException $ do
           d <- openPlist "test.plist"
           send d $ clear (Dict [])  -- clear dict
@@ -231,9 +236,9 @@ main = hspec $ do
             r <- get []
             exit
             return r
-          r0 `shouldBe` v           
+          r0 `shouldBe` v
 
-      it "test double exit" $ 
+      it "test double exit" $
         property $ \ (DictValue v) (DictValue v') -> guardPlistBuddyException $ do
           d <- openPlist "test.plist"
           send d $ clear (Dict [])  -- clear dict
@@ -244,13 +249,13 @@ main = hspec $ do
           d <- openPlist "test.plist"
           r0 <- send d $ get []
           send d $ exit
-          res <- (send d $ do { clear $ Dict [] ; populateDict v' ; return True}) 
+          res <- (send d $ do { clear $ Dict [] ; populateDict v' ; return True})
                      `catch` \ (e :: PlistBuddyException) -> do { return False }
           (r0,res) `shouldBe` (v,False)
 
   beforeAll clearDB $ do
-    describe "plist audit test" $ do  
-      it "test get/set/delete sequences, with basic audit trail usage" $ 
+    describe "plist audit test" $ do
+      it "test get/set/delete sequences, with basic audit trail usage" $
           forAll (modSized 8 return) $ \ n1 ->
           forAll (modSized 8 return) $ \ n2 ->
           forAll (modSized 8 return) $ \ n3 ->
@@ -274,7 +279,7 @@ main = hspec $ do
                 send d $ save
 
                 -- And do more stuff, without saving, but with audit
-                sequence_ [ send d u | (u,_) <- updates3 ]                
+                sequence_ [ send d u | (u,_) <- updates3 ]
                 auditOff d -- turn off audit, before turning exiting the plist
                 send d $ exit
 
@@ -292,7 +297,7 @@ main = hspec $ do
                 r0 `shouldBe` target
 
   beforeAll rmDB $ do
-    describe "create plists" $ do  
+    describe "create plists" $ do
       it "open non-existent plist" $ do
        property $ do
          d <- openPlist "test.plist"
@@ -301,8 +306,8 @@ main = hspec $ do
          r0 `shouldBe` Dict []
 
   beforeAll clearDB $ do
-    describe "auto-save plists" $ modifyMaxSuccess (\ x -> 3) $ do  
-      it "test bg save of DB, with changes in between" $ 
+    describe "auto-save plists" $ modifyMaxSuccess (\ x -> 3) $ do
+      it "test bg save of DB, with changes in between" $
         property $ noShrinking $ \ (DictValue v) (DictValue v') -> guardPlistBuddyException $ do
           bg <- backgroundPlist 1 $ openPlist "test.plist"
           bgSend bg $ clear (Dict [])  -- clear dict
@@ -318,7 +323,7 @@ main = hspec $ do
           send d $ exit
           r0 `shouldBe` v'
 
-      it "auto-restart" $ 
+      it "auto-restart" $
         property $ noShrinking $ \ (DictValue v) (DictValue v') -> guardPlistBuddyException $ do
           bg <- backgroundPlist 1 $ openPlist "test.plist"
           bgSend bg $ clear (Dict [])  -- clear dict
@@ -337,12 +342,12 @@ lastOf :: Value -> [(a,Value)] -> Value
 lastOf v xs = last (v : map snd xs)
 
 populateDict :: Value -> PlistBuddy ()
-populateDict (Dict xs) = 
+populateDict (Dict xs) =
    do sequence_ [ populate (Path $ [i]) v | (i,v) <- xs ]
 populateDict _ = error "expecting a Dict"
-  
+
 populate :: Path -> Value -> PlistBuddy ()
-populate (Path ps) val = 
+populate (Path ps) val =
   case val of
     Dict xs -> do
       add ps (Dict [])
@@ -357,9 +362,9 @@ populate (Path ps) val =
 [] `notIn` _        = False
 (p:ps) `notIn` (Dict xs) = case lookup p xs of
                         Nothing -> True
-                        Just v -> ps `notIn` v 
-(p:ps) `notIn` (Array vs) 
-                     | T.all isDigit p && not (T.null p) 
+                        Just v -> ps `notIn` v
+(p:ps) `notIn` (Array vs)
+                     | T.all isDigit p && not (T.null p)
                      = case drop (read (unpack p)) vs of
                          [] -> False
                          (v:_) -> ps `notIn` v
@@ -370,7 +375,7 @@ arbitraryUpdates :: Int -> Value -> Gen [(PlistBuddy (),Value)]
 arbitraryUpdates 0 v = return []
 arbitraryUpdates n v = do
   (u,v') <- arbitraryUpdate v
-  rest <- arbitraryUpdates (n-1) v' 
+  rest <- arbitraryUpdates (n-1) v'
   return $ (u,v') : rest
 
 arbitraryUpdate :: Value -> Gen (PlistBuddy (),Value)
@@ -395,9 +400,9 @@ arbitraryAdd = addMe  []
     addMe p (Array vs) = do
       let lbl = T.pack (show $ length vs) -- for now, append at end
       OneValue val <- arbitrary
-      return (add (p ++ [lbl]) val,Array $ vs ++ [val])      
+      return (add (p ++ [lbl]) val,Array $ vs ++ [val])
     addMe p other = return (return (), other)
-    
+
 arbitrarySet :: Value -> Gen (PlistBuddy (),Value)
 arbitrarySet = setMe []
   where
@@ -405,19 +410,19 @@ arbitrarySet = setMe []
     setMe p (Dict xs) = do
       Label lbl <- Label <$> elements (map fst xs)
       case lookup lbl xs of
-        Just v -> do 
+        Just v -> do
           if valueType v `elem` ["array","dict"]
           then return (return (), Dict xs)
-          else do 
+          else do
               v' <- arbitrarySameType v
               return ( set (p ++ [lbl]) v'
                      , Dict [ if l == lbl then (l,v') else (l,x) | (l,x) <-  xs ]
                      )
         Nothing -> error $ "should never happen" ++ show (lbl,map fst xs,xs)
 -- for now
---    setMe p (Array vs) = 
+--    setMe p (Array vs) =
     setMe p other = return (return (), other)
-      
+
 arbitraryDelete :: Value -> Gen (PlistBuddy (),Value)
 arbitraryDelete = delMe []
   where
@@ -433,19 +438,19 @@ arbitraryDelete = delMe []
     addMe p (Array vs) = do
       let lbl = T.pack (show $ length vs) -- for now, append at end
       OneValue val <- arbitrary
-      vs <- sequence $ 
+      vs <- sequence $
           [ return [ addMe (p ++ [T.pack $ show $ i]) v | (v,i) <- xs `zip` [(0::Int)..] ]
       return $ concat xs
     addMe p (Dict xs) = do
       Label lbl <- arbitrary
       OneValue val <- arbitrary
-      xs <- sequence $ 
-          [ return [ (add (p ++ [lbl]) val, Dict (xs ++ [(lbl,val)]))] 
+      xs <- sequence $
+          [ return [ (add (p ++ [lbl]) val, Dict (xs ++ [(lbl,val)]))]
           |  not (lbl `elem` map fst xs) ] ++
           [ addMe (p ++ [l]) v | (l,v) <- xs ]
       return $ concat xs
     addMe p other = return []
--}      
+-}
 
 {-
 arbitraryAdd :: Value -> Gen [(PlistBuddy (),Value)]
@@ -454,15 +459,15 @@ addInValue = addMe []
     addMe p (Array vs) = do
       let lbl = T.pack (show $ length vs) -- for now, append at end
       OneValue val <- arbitrary
-      vs <- sequence $ 
+      vs <- sequence $
           [ return [ addMe (p ++ [T.pack $ show $ i]) v | (v,i) <- xs `zip` [(0::Int)..] ]
       return $ concat xs
-      
+
     addMe p (Dict xs) = do
       Label lbl <- arbitrary
       OneValue val <- arbitrary
-      xs <- sequence $ 
-          [ return [ (add (p ++ [lbl]) val, Dict (xs ++ [(lbl,val)]))] 
+      xs <- sequence $
+          [ return [ (add (p ++ [lbl]) val, Dict (xs ++ [(lbl,val)]))]
           |  not (lbl `elem` map fst xs) ] ++
           [ addMe (p ++ [l]) v | (l,v) <- xs ]
       return $ concat xs
@@ -481,7 +486,7 @@ deleteInValue = del []
 {-
     -- TO ADD
         -- try get type error
-        
+
         r <- send d $ ((set ["I1"] (String "foo")>>return "no failed") `catchPlistError` \ msg -> return msg)
         check "check for type error" r $ "set failed: \"Unrecognized Integer Format\""
 
@@ -494,7 +499,7 @@ deleteInValue = del []
 	send d $ add ["S5"] (Date now)
 
         Date r0 <- send d $ get ["S5"]
-        
+
         check "check for date storage" (abs (diffUTCTime now r0) < 1) $ True
         _ <- send d $ exit
 
@@ -504,9 +509,9 @@ deleteInValue = del []
 
 check :: (Eq a, Show a) => Text -> a -> a -> IO ()
 check msg t1 t2 = if t1 /= t2 then fail ("check failed: " ++ show (msg,t1,t2)) else TIO.putStrLn msg
- 
+
 arbitraryValue :: Int -> Gen Value
-arbitraryValue n = frequency 
+arbitraryValue n = frequency
   [(7,(\ (PrimValue v) -> v) <$> arbitrary),
    (2,mysized $ \ n' -> mkDict <$> sequence [ arbitraryDict (n-1) | _ <- [1..n]]),
    (1,mysized $ \ n' -> Array <$> sequence [ arbitraryValue (n-1) | _ <- [1..n]])
@@ -532,7 +537,7 @@ arbitraryDate =
                                 -- +2
               )
           <*> (fromInteger <$> choose (0,60 * 60 * 24 - 1))
-        
+
 arbitraryText :: Gen Text
 arbitraryText = modSized 10 $ \ n -> pack <$> (vectorOf n $ elements ('\n':[' '..'~']))
 
@@ -564,23 +569,23 @@ valueShrink (Dict [(lbl,x)]) = [x]
 valueShrink (Dict xs) =
     [ Dict (take i xs ++ drop (i + 1) xs)
     | i <- [0..length xs - 1]
-    ] ++ 
+    ] ++
     [ Dict (map fst xs `zip` vs)
-    | vs <- transpose $ fmap valueShrink (map snd xs) 
+    | vs <- transpose $ fmap valueShrink (map snd xs)
     ]
 valueShrink (Array []) = []
 valueShrink (Array [x]) = [x]
 valueShrink (Array vs) =
     [ Array (take i vs ++ drop (i + 1) vs)
     | i <- [0..length vs - 1]
-    ] ++ 
+    ] ++
     [ Array vs
     | vs <- transpose $ map valueShrink vs
     ]
 --valueShrink (Date d) = [Date $ addUTCTime (60*60) d,Date $ addUTCTime (60) d,Date $ addUTCTime (1) d]
 
 valueShrink other = []
-    
+
 
 ---------------------------------------
 
@@ -589,32 +594,32 @@ arbitrarySameType v0 = do
   (OneValue v) <- arbitrary
   if valueType v0 == valueType v
   then return v
-  else arbitrarySameType v0 
+  else arbitrarySameType v0
 
 newtype PrimValue = PrimValue Value -- any primitive
   deriving (Show,Generic)
 
 instance Arbitrary PrimValue where
-  arbitrary = PrimValue <$> oneof 
+  arbitrary = PrimValue <$> oneof
     [ Integer <$> arbitrary
     , String  <$> arbitraryText
     , Bool    <$> arbitrary
     , Real    <$> arbitrary
     , Date    <$> arbitraryDate -- for now
-    , Data    <$> arbitraryData 
+    , Data    <$> arbitraryData
     ]
   shrink (PrimValue v) = [ PrimValue v' | v' <- valueShrink v, valueType v == valueType v']
 
 newtype OneValue = OneValue Value -- primitive + empty dict or empty array
   deriving (Show,Generic)
-  
+
 instance Arbitrary OneValue where
   arbitrary = OneValue <$> arbitraryValue 0
   shrink (OneValue v) = [ OneValue v' | v' <- valueShrink v, valueType v == valueType v']
 
 newtype DeepValue = DeepValue Value -- any value, to any depth
   deriving (Show,Generic)
-  
+
 instance Arbitrary DeepValue where
   arbitrary = DeepValue <$> modSized 8 arbitraryValue
   shrink (DeepValue v) = [ DeepValue v' | v' <- valueShrink v, valueType v == valueType v']
@@ -625,7 +630,7 @@ newtype DictValue = DictValue Value -- any value, to any depth
 instance Arbitrary DictValue where
   arbitrary = (DictValue . mkDict) <$> (modSized 8 $ \ n -> vectorOf n (modSized 8 arbitraryDict))
   shrink (DictValue v) = [ DictValue v' | v' <- valueShrink v, valueType v == valueType v']
-  
+
 newtype Label = Label Text
   deriving (Show,Generic)
 
@@ -673,20 +678,20 @@ arbitraryReadPath _ v = return (Path [],v)
 
 compareValue :: Path -> Value -> Value -> String
 compareValue (Path ps) v1 v2 | valueType v1 /= valueType v2 = "different types : " ++ show (ps,v1,v2)
-compareValue (Path ps) (Dict ds1) (Dict ds2) 
+compareValue (Path ps) (Dict ds1) (Dict ds2)
   | nm1 /= nm2 = "different names of fields in dict : " ++ show (ps,nm1,nm2)
   | otherwise = concat [ case (lookup nm ds1,lookup nm ds2) of
-                          (Just v1,Just v2) -> compareValue (Path (ps ++ [nm])) v1 v2 
+                          (Just v1,Just v2) -> compareValue (Path (ps ++ [nm])) v1 v2
                           _ -> "internal error in dict compare " ++ show ps
                        | nm <- nm1 ]
  where
    nm1 = sort (nub (map fst ds1))
    nm2 = sort (nub (map fst ds2))
 
-compareValue (Path ps) (Array ds1) (Array ds2) 
+compareValue (Path ps) (Array ds1) (Array ds2)
   | length ds1 /= length ds2 = "different lengths of array : " ++ show (ps,length ds1,length ds2)
   | otherwise = concat [ compareValue (Path (ps ++ [pack (show i)])) d1 d2 | (i,d1,d2) <- zip3 [0..] ds1 ds2 ]
-compareValue (Path ps) v1 v2 
+compareValue (Path ps) v1 v2
   | v1 /= v2 = "different values : " ++ show (ps,v1,v2)
   | otherwise = ""
 
